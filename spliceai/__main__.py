@@ -40,21 +40,28 @@ def get_options():
 
 
 def main():
-
     args = get_options()
-
+    buffer_size = 1000 #TODO - make argument
     vcf = pysam.VariantFile(args.I)
     header = vcf.header
     header.add_line('##INFO=<ID=SpliceAI,Number=.,Type=String,Description="SpliceAI variant annotation. These include delta scores (DS) and delta positions (DP) for acceptor gain (AG), acceptor loss (AL), donor gain (DG), and donor loss (DL). Format: ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL">')
     output = pysam.VariantFile(args.O, mode='w', header=header)
     ann = annotator(args.R, args.A)
-
+    cache = []
     for record in vcf:
-        scores = get_delta_scores(record, ann)
-        if len(scores) > 0:
-            record.info['SpliceAI'] = scores
-        output.write(record)
+        cache.append(record)
+        if len(cache) >= buffer_size:
+            process_cache(cache, output, ann)
+            cache = []
+    if cache:
+        process_cache(cache, output, ann)
 
+def process_cache(cache, output, ann):
+    scores = get_delta_scores(cache, ann)
+    for record,sc in zip(cache, scores):
+        if len(sc) > 0:
+            record.info['SpliceAI'] = sc
+        output.write(record)
 
 if __name__ == '__main__':
     main()
