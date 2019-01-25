@@ -7,6 +7,7 @@ from keras.models import load_model
 from collections import defaultdict
 import operator
 
+
 class annotator():
 
     def __init__(self, ref_fasta, annotations):
@@ -61,12 +62,57 @@ def one_hot_encode(seq):
 
     return MAP[np.fromstring(seq, np.int8) % 5]
 
+def _score_batches(refs, alts, ann):
+    '''
+        Puts refs and alts into lists with arrays of same lengths and
+        score in batches. Returns two lists of scores in the same order
+        as provided.
+    '''
+    batches = defaultdict(list)
+    scores = defaultdict(list)
+    ref_indices = dict()
+    alt_indices = dict()
+    i = 0
+    for i in range(len(refs)):
+        l = len(refs[i][0])
+        batches[l].append(refs[i])
+        ref_indices[i] = (l, len(batches[l]) - 1)
+    for i in range(len(alts)):
+        l = len(alts[i][0])
+        batches[l].append(alts[i])
+        alt_indices[i] = (l, len(batches[l]) - 1)
+    for l,batch in batches.items():
+        Y0s = ann.models[0].predict_generator((x for x in batch),
+                                              steps=len(batch))
+        Y1s = ann.models[1].predict_generator((x for x in batch),
+                                              steps=len(batch))
+        Y2s = ann.models[2].predict_generator((x for x in batch),
+                                              steps=len(batch))
+        Y3s = ann.models[3].predict_generator((x for x in batch),
+                                              steps=len(batch))
+        Y4s = ann.models[4].predict_generator((x for x in batch),
+                                              steps=len(batch))
+        scores[l] = list((Y0s[i]+Y1s[i]+Y2s[i]+Y3s[i]+Y4s[i])/5 for i in
+                     range(len(Y0s)))
+    ref_scores = []
+    alt_scores = []
+    for i in range(len(refs)):
+        l,idx = ref_indices[i]
+        ref_scores.append(np.asarray([scores[l][idx]]))
+    for i in range(len(alts)):
+        l,idx = alt_indices[i]
+        alt_scores.append(np.asarray([scores[l][idx]]))
+    return ref_scores,alt_scores
+
+
+
 
 def get_delta_scores(records, ann, L=1001):
 
     W = 10000+L
     r = 0 #record index
     s = 0 #score index
+    u = 0 #unscored index
     scored_genes = []
     scored_strands = []
     scored_alts = []
@@ -76,21 +122,23 @@ def get_delta_scores(records, ann, L=1001):
     ref_to_score = []
     alt_to_score = []
     rec_to_scores = defaultdict(list)
+    rec_to_unscored = defaultdict(list)
     delta_scores = []
+    unscored = []
     for record in records:
+        r += 1
         (genes, strands, idxs) = ann.get_name_and_strand(record.chrom, record.pos)
         for j in range(len(record.alts)):
             if len(idxs) == 0:
-                delta_scores.append("{}|.|.|.|.|.|.|.|.|.".format(record.alts[j]))
-                rec_to_scores[r].append(s)
-                s += 1
+                unscored.append("{}|.|.|.|.|.|.|.|.|.".format(record.alts[j]))
+                rec_to_unscored[r-1].append(u)
+                u += 1
             for i in range(len(idxs)):
                 dist = ann.get_pos_data(idxs[i], record.pos)
-
                 if len(record.ref) > 1 and len(record.alts[j]) > 1:
-                    delta_scores.append("{}|.|.|.|.|.|.|.|.|.".format(record.alts[j]))
-                    rec_to_scores[r].append(s)
-                    s += 1
+                    unscored.append("{}|.|.|.|.|.|.|.|.|.".format(record.alts[j]))
+                    rec_to_unscored[r-1].append(u)
+                    u += 1
                     continue
                 # Ignoring complicated INDELs
                 
@@ -119,35 +167,16 @@ def get_delta_scores(records, ann, L=1001):
                 scored_strands.append(strands[i])
                 scored_genes.append(genes[i])
                 scored_alts.append(record.alts[j])
-                rec_to_scores[r].append(s)
+                rec_to_scores[r-1].append(s)
                 s += 1
-    #PROBLEM - this works only if all our np arrays are the same dimensions
-    #          we need to split into batches with equal dimensions (i.e. 
+    #PROBLEM - we can only use precit_generator for np arrays of the same
+    #          dimensions.
+    #          We need to split into batches with equal dimensions (i.e. 
     #          len(ref_to_score[n][0]) == len(ref_to_score[m][0]) ... )
-
-    ref_Y0s = ann.models[0].predict_generator((x for x in ref_to_score),
-                                              steps=len(ref_to_score))
-    ref_Y1s = ann.models[1].predict_generator((x for x in ref_to_score),
-                                              steps=len(ref_to_score))
-    ref_Y2s = ann.models[2].predict_generator((x for x in ref_to_score),
-                                              steps=len(ref_to_score))
-    ref_Y3s = ann.models[3].predict_generator((x for x in ref_to_score),
-                                              steps=len(ref_to_score))
-    ref_Y4s = ann.models[4].predict_generator((x for x in ref_to_score),
-                                              steps=len(ref_to_score))
-    alt_Y0s = ann.models[0].predict_generator((x for x in alt_to_score),
-                                              steps=len(alt_to_score))
-    alt_Y1s = ann.models[1].predict_generator((x for x in alt_to_score),
-                                              steps=len(alt_to_score))
-    alt_Y2s = ann.models[2].predict_generator((x for x in alt_to_score),
-                                              steps=len(alt_to_score))
-    alt_Y3s = ann.models[3].predict_generator((x for x in alt_to_score),
-                                              steps=len(alt_to_score))
-    alt_Y4s = ann.models[4].predict_generator((x for x in alt_to_score),
-                                              steps=len(alt_to_score))
+    Y_refs, Y_alts = _score_batches(ref_to_score, alt_to_score, ann)
     for i in range(len(ref_to_score)):
-        Y_ref = (ref_Y0s[i]+ref_Y1s[i]+ref_Y2s[i]+ref_Y3s[i]+ref_Y4s[i])/5
-        Y_alt = (alt_Y0s[i]+alt_Y1s[i]+alt_Y2s[i]+alt_Y3s[i]+alt_Y4s[i])/5
+        Y_ref = Y_refs[i]
+        Y_alt = Y_alts[i]
         if scored_strands[i] == '-':
             Y_ref = Y_ref[:, ::-1]
             Y_alt = Y_alt[:, ::-1]
@@ -183,8 +212,19 @@ def get_delta_scores(records, ann, L=1001):
             idx_pD-L//2,
             idx_nD-L//2))
     for i in range(len(records)):
-        score_indices = rec_to_scores[i]
-        scores = operator.itemgetter(score_indices)(delta_scores)
+        scores = []
+        if i in rec_to_scores:
+            s = operator.itemgetter(*rec_to_scores[i])(delta_scores)
+            if isinstance(s, str):
+                scores.append(s)
+            else: #if more than one result will be a tuple
+                scores.extend(s)
+        if i in rec_to_unscored:
+            s = operator.itemgetter(*rec_to_unscored[i])(unscored)
+            if isinstance(s, str):
+                scores.append(s)
+            else: #if more than one result will be a tuple
+                scores.extend(s)
         if len(scores) > 0:
             records[i].info['SpliceAI'] = scores
     return records
