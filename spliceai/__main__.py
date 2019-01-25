@@ -2,7 +2,16 @@ import argparse
 import sys
 import pysam
 from spliceai.utils import annotator, get_delta_scores
+import logging
 
+logger = logging.getLogger("SpliceAI")
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter(
+       '[%(asctime)s] %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 # Account for python2/python3 differences
 try:
@@ -41,7 +50,7 @@ def get_options():
 
 def main():
     args = get_options()
-    buffer_size = 1000 #TODO - make argument
+    buffer_size = 10000 #TODO - make argument
     vcf = pysam.VariantFile(args.I)
     header = vcf.header
     header.add_line('##INFO=<ID=SpliceAI,Number=.,Type=String,Description="SpliceAI variant annotation. These include delta scores (DS) and delta positions (DP) for acceptor gain (AG), acceptor loss (AL), donor gain (DG), and donor loss (DL). Format: ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL">')
@@ -57,10 +66,10 @@ def main():
         process_cache(cache, output, ann)
 
 def process_cache(cache, output, ann):
-    scores = get_delta_scores(cache, ann)
-    for record,sc in zip(cache, scores):
-        if len(sc) > 0:
-            record.info['SpliceAI'] = sc
+    logger.info("Processing cache of {} variants in range".format(len(cache)) +
+                " {}:{} - {}:{}".format(cache[0].chrom, cache[0].pos,
+                                        cache[-1].chrom, cache[-1].pos))
+    for record in get_delta_scores(cache, ann):
         output.write(record)
 
 if __name__ == '__main__':
