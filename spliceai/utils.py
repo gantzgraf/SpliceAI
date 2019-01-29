@@ -2,7 +2,7 @@ from pkg_resources import resource_filename
 import pandas as pd
 import numpy as np
 import re
-import pyfasta
+import pyfaidx
 from keras.models import load_model
 
 
@@ -20,7 +20,7 @@ class annotator():
         self.tx_starts = df['TX_START'].get_values()+1
         self.tx_ends = df['TX_END'].get_values()
 
-        self.ref_fasta = pyfasta.Fasta(ref_fasta)
+        self.ref_fasta = pyfaidx.Fasta(ref_fasta, as_raw=True)
 
         paths = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
         self.models = [load_model(resource_filename(__name__, x)) for x in paths]
@@ -93,7 +93,7 @@ def get_delta_scores(record, ann, L=1001):
                                     record.pos-W//2-1:record.pos+W//2]
             except:
                 seq = ann.ref_fasta['chr'+str(record.chrom)][
-                                    record.pos-W//2-1:record.pos+W//2]                
+                                    record.pos-W//2-1:record.pos+W//2]
 
             x_ref = 'N'*pad_size[0]+seq[pad_size[0]:W-pad_size[1]]\
                      +'N'*pad_size[1]
